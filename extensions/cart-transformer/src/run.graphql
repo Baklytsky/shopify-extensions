@@ -1,0 +1,38 @@
+query RunInput {
+  cart {
+    lines {
+      id
+      quantity
+      cost {
+        totalAmount {
+          amount
+          currencyCode
+        }
+      }
+      gwp: attribute(key: "_gwp") {
+        value
+      }
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          id
+          title
+          product {
+            bundleProductsJSON: metafield(
+              key: "bundle_json"
+              namespace: "custom"
+            ) {
+              value
+            }
+            bundleItems: metafield(
+              key: "bundle_items"
+              namespace: "custom"
+            ) {
+              value
+            }
+          }
+        }
+      }
+    }
+  }
+}
