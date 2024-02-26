@@ -26,77 +26,81 @@ function getGwpConditions(value) {
   }
 }
 
+const calculateCartSubtotal = (cost) => cost.subtotalAmount.current.amount;
+const calculateGwpInCart = (cartLines) => cartLines.filter(lineItem => lineItem.attributes.some(attr => attr.key === "_gwp"));
+const calculateGwpIdInCart = (gwpInCart) => gwpInCart.map(lineItem => lineItem.merchandise.id);
+
 function App() {
   const [gwpValue] = useAttributeValues(['__gwp']);
   const gwpConditions = gwpValue ? getGwpConditions(gwpValue) : null;
 
   console.log(gwpConditions, 'gwpConditions')
-
-  if (!gwpConditions) return;
+  if (!gwpConditions) return null;
 
   const applyCartLinesChange = useApplyCartLinesChange();
   const cartLines = useCartLines();
-  const quantityInCart = cartLines.reduce((acc, item) => item.quantity + acc, 0);
   const totalAmount = useTotalAmount();
   const { cost} = useApi();
-  const [itemsToAdd, setItemsToAdd] = useState([]);
-  const [itemsToRemove, setItemsToRemove] = useState([]);
+  const [promisesCompleted, setPromisesCompleted] = useState(false);
 
-  const removeFromCart = useCallback((items) => {
-    return items.map((line) => (
+  const removeFromCart = useCallback((items) => (
+    items.map((line) => (
         applyCartLinesChange({
           type: "removeCartLine",
           id: line.id,
           quantity: line.quantity
         })
-    ));
-  }, [applyCartLinesChange]);
+    ))
+  ), [applyCartLinesChange]);
 
-  const addToCart = useCallback((items) => {
-    return items.map((line) => (
-        applyCartLinesChange({
-          type: "addCartLine",
-          merchandiseId: line.id,
-          quantity: 1,
-          attributes: [{
-            key: "_free-gift",
-            value: "true",
-          }],
-        })
-    ));
-  }, [applyCartLinesChange]);
+  const addToCart = useCallback((items) => (
+      items.map((line) => (
+          applyCartLinesChange({
+            type: "addCartLine",
+            merchandiseId: line.id,
+            quantity: 1,
+            attributes: [{
+              key: "_gwp",
+              value: "true",
+            }],
+          })
+      ))
+  ), [applyCartLinesChange]);
 
-  const getItemsForChange = () => {
-    const cartTotal = cost.subtotalAmount.current.amount;
-    const gwpInCart = cartLines.filter(lineItem => (
-        lineItem.attributes.some(attr => attr.key === "_free-gift")
-    ));
-    const gwpIdInCart = gwpInCart.map(lineItem => lineItem.merchandise.id);
-    const gwpToAdd = gwpConditions.filter(
-        condition => (cartTotal >= condition.threshold && !gwpIdInCart.includes(condition.id)
-        ));
-    const gwpToRemove = gwpInCart.filter(lineItem => (
-        gwpConditions.find(
-            condition => condition.id === lineItem.merchandise.id && cartTotal < condition.threshold)
-    ));
+  const calculateItemsForChange = () => {
+    const cartSubtotal = calculateCartSubtotal(cost);
+    const gwpInCart = calculateGwpInCart(cartLines);
+    const gwpIdInCart = calculateGwpIdInCart(gwpInCart);
 
-    setItemsToAdd(gwpToAdd);
-    setItemsToRemove(gwpToRemove);
+    const itemsToAdd = gwpConditions.filter(
+        condition => cartSubtotal >= condition.threshold && !gwpIdInCart.includes(condition.id));
+    const itemsToRemove = gwpInCart.filter(
+        lineItem => gwpConditions.find(condition => condition.id === lineItem.merchandise.id && cartSubtotal < condition.threshold));
+
+    return [itemsToAdd, itemsToRemove]
   }
 
 
-  useMemo(() => getItemsForChange(), [totalAmount.amount, quantityInCart]);
+  const memoizedChanges = useMemo(() => calculateItemsForChange(), [totalAmount, cartLines]);
 
   const applyCartChanges = () => {
-    const addToCartPromise = itemsToAdd.length ? addToCart(itemsToAdd) : Promise.resolve();
-    const removeFromCartPromise = itemsToRemove.length ? removeFromCart(itemsToRemove) : Promise.resolve();
+    const [itemsToAdd, itemsToRemove] = memoizedChanges;
+    const cartChangePromises = [];
 
-    Promise.all([addToCartPromise, removeFromCartPromise])
-        .then(() => console.log('GWPs updated'))
-        .catch(error => console.error('Error updating GWPs:', error));
+    if (itemsToAdd.length) cartChangePromises.push(addToCart(itemsToAdd));
+    if (itemsToRemove.length) cartChangePromises.push(removeFromCart(itemsToRemove));
+    if (cartChangePromises.length && !promisesCompleted) {
+      setPromisesCompleted(false);
+      Promise.all(cartChangePromises)
+          .then(() => {
+            setPromisesCompleted(true);
+            console.log('GWPs updated');
+          })
+          .catch(error => console.error('Error updating GWPs:', error));
+    }
   }
 
-  useEffect(() => applyCartChanges(), [itemsToAdd, itemsToRemove])
+  useEffect(() => applyCartChanges(), [memoizedChanges])
 
   return null;
 }
