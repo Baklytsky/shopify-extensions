@@ -1,6 +1,6 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-name = "Checkout UI"
+name = "Checkout UI (Andrew)"
 client_id = "cf0263d6a91204d4e17a19dd829d42c3"
 application_url = "https://shopify.dev/apps/default-app-home"
 embedded = true
