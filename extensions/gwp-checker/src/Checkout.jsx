@@ -1,4 +1,4 @@
-import React, {useEffect, useCallback, useMemo} from "react";
+import React, {useState, useEffect, useCallback, useMemo } from "react";
 import {
   reactExtension,
   useApi,
@@ -12,11 +12,14 @@ export default reactExtension("purchase.checkout.block.render", () => <App/>);
 
 function getGwpConditions(value) {
   if (!value) return null;
-  const replacedStr = value.replace(/\\"/g, '"').replace(/"=>"/g, '": "').replace(/"=>/g, '":');
+  const replacedStr = value
+      .replace(/\\"/g, '"')
+      .replace(/"=>"/g, '": "')
+      .replace(/"=>/g, '":');
 
   try {
     const parsedData = JSON.parse(replacedStr);
-    return (typeof parsedData === 'object' && parsedData !== null) ? Object.values(parsedData) : null;
+    return parsedData && typeof parsedData === "object" ? Object.values(parsedData) : null;
   } catch (error) {
     console.error('Error parsing JSON:', error.message);
     return null;
@@ -33,8 +36,11 @@ function App() {
 
   const applyCartLinesChange = useApplyCartLinesChange();
   const cartLines = useCartLines();
+  const quantityInCart = cartLines.reduce((acc, item) => item.quantity + acc, 0);
   const totalAmount = useTotalAmount();
-  const {cost} = useApi();
+  const { cost} = useApi();
+  const [itemsToAdd, setItemsToAdd] = useState([]);
+  const [itemsToRemove, setItemsToRemove] = useState([]);
 
   const removeFromCart = useCallback((items) => {
     return items.map((line) => (
@@ -53,39 +59,44 @@ function App() {
           merchandiseId: line.id,
           quantity: 1,
           attributes: [{
-            key: "_gwp",
+            key: "_free-gift",
             value: "true",
           }],
         })
     ));
   }, [applyCartLinesChange]);
 
-  const memoizeGwpItems = useMemo(() => {
-    const cartTotal = cost.totalAmount.current.amount;
+  const getItemsForChange = () => {
+    const cartTotal = cost.subtotalAmount.current.amount;
     const gwpInCart = cartLines.filter(lineItem => (
-        lineItem.attributes.some(attr => attr.key === "_gwp")
+        lineItem.attributes.some(attr => attr.key === "_free-gift")
     ));
     const gwpIdInCart = gwpInCart.map(lineItem => lineItem.merchandise.id);
-    const itemsToAdd = gwpConditions.filter(condition => (
-        cartTotal >= condition.threshold && !gwpIdInCart.includes(condition.id)
+    const gwpToAdd = gwpConditions.filter(
+        condition => (cartTotal >= condition.threshold && !gwpIdInCart.includes(condition.id)
+        ));
+    const gwpToRemove = gwpInCart.filter(lineItem => (
+        gwpConditions.find(
+            condition => condition.id === lineItem.merchandise.id && cartTotal < condition.threshold)
     ));
-    const itemsToRemove = gwpInCart.filter(lineItem => (
-        gwpConditions.find(condition => condition.id === lineItem.merchandise.id && cartTotal <= condition.threshold)
-    ));
 
-    return {itemsToAdd, itemsToRemove};
-  }, [totalAmount]);
+    setItemsToAdd(gwpToAdd);
+    setItemsToRemove(gwpToRemove);
+  }
 
 
-  useEffect(() => {
-    const {itemsToAdd, itemsToRemove} = memoizeGwpItems;
+  useMemo(() => getItemsForChange(), [totalAmount.amount, quantityInCart]);
+
+  const applyCartChanges = () => {
     const addToCartPromise = itemsToAdd.length ? addToCart(itemsToAdd) : Promise.resolve();
     const removeFromCartPromise = itemsToRemove.length ? removeFromCart(itemsToRemove) : Promise.resolve();
 
     Promise.all([addToCartPromise, removeFromCartPromise])
         .then(() => console.log('GWPs updated'))
         .catch(error => console.error('Error updating GWPs:', error));
-  }, [memoizeGwpItems])
+  }
+
+  useEffect(() => applyCartChanges(), [itemsToAdd, itemsToRemove])
 
   return null;
 }
