@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   reactExtension,
   useApi,
@@ -29,6 +29,14 @@ function getGwpConditions(value) {
 const calculateCartSubtotal = (cost) => cost.subtotalAmount.current.amount;
 const calculateGwpInCart = (cartLines) => cartLines.filter(lineItem => lineItem.attributes.some(attr => attr.key === "_gwp"));
 const calculateGwpIdInCart = (gwpInCart) => gwpInCart.map(lineItem => lineItem.merchandise.id);
+const shouldAddItemToCart = (item, cartSubtotal, gwpIdInCart) => {
+  const { threshold, id } = item;
+  return cartSubtotal >= threshold && !(gwpIdInCart.includes(id));
+};
+const shouldRemoveItemFromCart = (item, gwpConditions, cartSubtotal) => {
+  const { merchandise } = item;
+  return !!gwpConditions.find(({ threshold, id }) => id === merchandise.id && cartSubtotal < threshold);
+};
 
 function App() {
   const [gwpValue] = useAttributeValues(['__gwp']);
@@ -41,7 +49,6 @@ function App() {
   const cartLines = useCartLines();
   const totalAmount = useTotalAmount();
   const { cost} = useApi();
-  const [promisesCompleted, setPromisesCompleted] = useState(false);
 
   const removeFromCart = useCallback((items) => (
     items.map((line) => (
@@ -67,40 +74,35 @@ function App() {
       ))
   ), [applyCartLinesChange]);
 
-  const calculateItemsForChange = () => {
+  const calculateItemsForChange = (cost, cartLines) => {
     const cartSubtotal = calculateCartSubtotal(cost);
     const gwpInCart = calculateGwpInCart(cartLines);
     const gwpIdInCart = calculateGwpIdInCart(gwpInCart);
+    const itemsToAdd = gwpConditions.filter(item =>
+        shouldAddItemToCart(item, cartSubtotal, gwpIdInCart));
+    const itemsToRemove = gwpInCart.filter(item =>
+        shouldRemoveItemFromCart(item, gwpConditions, cartSubtotal));
 
-    const itemsToAdd = gwpConditions.filter(
-        condition => cartSubtotal >= condition.threshold && !gwpIdInCart.includes(condition.id));
-    const itemsToRemove = gwpInCart.filter(
-        lineItem => gwpConditions.find(condition => condition.id === lineItem.merchandise.id && cartSubtotal < condition.threshold));
-
-    return [itemsToAdd, itemsToRemove]
+    return [itemsToAdd || [], itemsToRemove || []]
   }
 
+  const memoizedChanges = useMemo(() => calculateItemsForChange(cost, cartLines), [totalAmount.amount, cost, cartLines]);
 
-  const memoizedChanges = useMemo(() => calculateItemsForChange(), [totalAmount, cartLines]);
-
-  const applyCartChanges = () => {
-    const [itemsToAdd, itemsToRemove] = memoizedChanges;
+  const applyCartChanges = (changes) => {
+    const [itemsToAdd, itemsToRemove] = changes;
     const cartChangePromises = [];
 
     if (itemsToAdd.length) cartChangePromises.push(addToCart(itemsToAdd));
     if (itemsToRemove.length) cartChangePromises.push(removeFromCart(itemsToRemove));
-    if (cartChangePromises.length && !promisesCompleted) {
-      setPromisesCompleted(false);
+
+    if (cartChangePromises.length) {
       Promise.all(cartChangePromises)
-          .then(() => {
-            setPromisesCompleted(true);
-            console.log('GWPs updated');
-          })
-          .catch(error => console.error('Error updating GWPs:', error));
+          .then(() => {console.log('GWPs updated')})
+          .catch(e => console.error('Error updating GWPs:', e));
     }
   }
 
-  useEffect(() => applyCartChanges(), [memoizedChanges])
+  useEffect(() => applyCartChanges(memoizedChanges), [memoizedChanges])
 
   return null;
 }
